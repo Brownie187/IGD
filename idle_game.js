@@ -1,7 +1,90 @@
-const smithingRecipes = {
-  'Iron Bar': {
-    consumes: { 'Iron': 1, 'Coal': 1 },
-    out: { name: 'Iron Bar', qty: 1, rarity: 'common' },
-    time: 1000 // optional, if you want per-recipe override
-  }
-};
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Idle RPG Demo</title>
+  <link rel="stylesheet" href="idle_game.css">
+</head>
+
+<body class="dark-mode">
+  <div id="characterSelection">
+    <div class="charBox" data-char="Mensch">Mensch</div>
+    <div class="charBox" data-char="Nymph">Nymph</div>
+    <div class="charBox" data-char="Zwerg">Zwerg</div>
+  </div>
+
+  <aside id="skills" class="hidden">
+    <h3>Skills</h3>
+    <button class="skillBtn" data-skill="fishing">Fischen <span class="lvl">Lv 1</span></button>
+    <button class="skillBtn" data-skill="lumbering">Holzfällen <span class="lvl">Lv 1</span></button>
+    <button class="skillBtn" data-skill="mining">Bergbau <span class="lvl">Lv 1</span></button>
+    <button class="skillBtn" data-skill="smithing">Schmieden <span class="lvl">Lv 1</span></button>
+  </aside>
+  <section id="gameplay" class="hidden">
+    <div id="typeTabs" class="tabs"></div>
+    <div id="controls">
+      <label>Wie oft? <input type="text" id="repeatCount" placeholder="∞"></label>
+      <button id="startBtn" disabled>Start</button>
+      <button id="queueBtn" disabled>Queue Next</button>
+    </div>
+    <div id="info"></div>
+    <div id="progressBox">
+      <progress id="progressBar" value="0" max="100"></progress>
+      <div id="progressOverlay">Aktuelle Task: - | Warteschlange: 0</div>
+      <button id="progressStopBtn">Stop</button>
+      <button id="progressStopAllBtn">Stop All</button>
+    </div>
+  </section>
+  <aside id="character" class="hidden">
+    <h3 id="charHeader">Charakter: -</h3>
+    <div class="rightTabs">
+      <button class="tabRightBtn active" data-tab="inventory">Inventar</button>
+      <button class="tabRightBtn" data-tab="equipment">Ausrüstung</button>
+    </div>
+    <div id="saveControls" style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
+      <button id="exportBtn">Export Save</button>
+      <button id="importBtn">Import Save</button>
+      <input id="importFile" type="file" accept="application/json" style="display:none;">
+      <button id="resetBtn" style="background:#d9534f; color:#fff;">Reset</button>
+      <span id="saveDot" style="margin-left:auto; opacity:.8;">●</span>
+    </div>
+
+    <div id="inventory" class="tabContent active">
+      <div class="inv-section">
+        <h4>Loot</h4>
+        <ul id="lootList"></ul>
+      </div>
+      <div class="inv-section" style="margin-top:10px;">
+        <h4>Equipment</h4>
+        <ul id="equipList"></ul>
+      </div>
+    </div>
+
+    <div id="equipment" class="tabContent">
+      <div class="equip-skeleton">
+        <div class="slot equip-slot" data-slot="head" style="grid-area:head;">Kopf</div>
+        <div class="slot equip-slot" data-slot="chest" style="grid-area:chest;">Brust</div>
+        <div class="slot equip-slot" data-slot="legs" style="grid-area:legs;">Beine</div>
+        <div class="slot equip-slot" data-slot="shoes" style="grid-area:shoes;">Schuhe</div>
+        <div class="slot equip-slot" data-slot="weapon" style="grid-area:weapon;">Waffe</div>
+        <div class="slot equip-slot" data-slot="tool" style="grid-area:tool;">Werkzeug</div>
+        <div class="slot equip-slot" data-slot="offhand" style="grid-area:offhand;">Offhand</div>
+        <div class="slot equip-slot" data-slot="backpack" style="grid-area:backpack;">Rucksack</div>
+      </div>
+    </div>
+    <button id="charMenuBtn">Character</button>
+
+    <!-- Gear-Modal (kleines Popover) -->
+    <div id="gearModal" class="hidden"
+      style="position:absolute; z-index:9999; min-width:200px; background:#3a3c3f; color:#ddd; border:1px solid #444; border-radius:6px; padding:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <strong id="gearModalTitle">Ausrüstung wählen</strong>
+        <button id="gearModalClose"
+          style="border:none; background:#d9534f; color:#fff; padding:2px 6px; border-radius:4px; cursor:pointer;">X</button>
+      </div>
+      <div id="gearList" style="max-height:180px; overflow:auto; border-top:1px solid #444; padding-top:6px;"></div>
+    </div>
+  </aside>
+  <script defer src="idle_game.js"></script>
+</body>
+</html>
