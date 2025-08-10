@@ -1,4 +1,4 @@
-// Skill definition
+// Skill definitions
     const skills = {
       fishing: {
         level: 1,
@@ -40,18 +40,18 @@
       weapon: null, tool: null, offhand: null, backpack: null
     };
 
-    // Per-type smithing recipes
-const smithingRecipes = {
+// Per-type smithing recipes (single source of truth)
+const SMITHING_RECIPES = {
   'Iron Bar': {
-    consumes: { 'Iron': 1, 'Coal': 1 },
+    consumes: { Iron: 1, Coal: 1 },
     out: { name: 'Iron Bar', qty: 1, rarity: 'common' },
-    time: 1000 // optional, if you want per-recipe override
+    time: 1000,   // per-recipe craft time (ms)
+    xp: 15        // per-recipe XP (optional; falls back to skills.smithing.xpPer)
   }
 };
 
+skills.smithing.types = Object.keys(SMITHING_RECIPES);
 
-
-    skills.smithing.types = Object.keys(SMITHING_RECIPES);
 
     // ---- Config knobs (easy to tweak) ----
     const CFG = {
@@ -324,7 +324,7 @@ const smithingRecipes = {
     // --- Load save (if any) and render ---
     applyState(Persistence.load());
     renderInventory();
-    equippedSlots();
+    renderEquippedSlots();
     updateSkillButtons();
     refreshTypeTabs();
     updateQueueStatus();
@@ -406,7 +406,7 @@ resetBtn.addEventListener('click', () => {
   info.innerHTML = '';
 
   renderInventory();
-  equippedSlots();
+  renderEquippedSlots();
   updateSkillButtons();
   refreshTypeTabs?.();
   updateQueueStatus();
@@ -432,8 +432,9 @@ resetBtn.addEventListener('click', () => {
       renderInventory();
     }
 
-    tryLoad()
-    requestSave()
+    tryLoad();
+requestSave();
+
 
     // Return to character selection
     function showMainMenu() {
@@ -577,23 +578,14 @@ resetBtn.addEventListener('click', () => {
       const d = skills[currentSkill];
       if (currentSkill === 'smithing') {
   const rec = SMITHING_RECIPES[type];
-  const dur = ((rec?.duration ?? d.duration) / 1000).toFixed(1);
-  const xp  = (rec?.xp ?? d.xpPer);
+const dur = ((rec?.time ?? d.duration) / 1000).toFixed(1);
+const xp  = (rec?.xp ?? d.xpPer);
+const inputs = Object.entries(rec.consumes).map(([n, q]) => `${q}× ${n}`).join(', ');
+const out = rec.out;
+const outputs = `${out.qty}× ${out.name} (${out.rarity || 'common'})`;
 
-  const inputs = Object.entries(rec.consumes)
-    .map(([n, q]) => `${q}× ${n}`).join(', ');
-
-  const out    = rec.output;
-  const outputs = `${out.qty}× ${out.name} (${out.rarity || 'common'})`;
-
-  info.innerHTML = `XP: ${xp}<br>Dauer: ${dur}s<br>Inputs: ${inputs}<br>Result: ${outputs}`;
-}  else {
-        const d = skills[currentSkill];
-        info.innerHTML =
-          `XP: ${d.xpPer}<br>` +
-          `Dauer: ${(d.duration / 1000).toFixed(1)}s<br>` +
-          `Drop: ${type}`;
-      }
+info.innerHTML = `XP: ${xp}<br>Dauer: ${dur}s<br>Inputs: ${inputs}<br>Result: ${outputs}`;
+       } 
     }
 
 
@@ -679,7 +671,7 @@ resetBtn.addEventListener('click', () => {
 
       // UI
       renderInventory();
-      equippedSlots();
+      renderEquippedSlots();
       requestSave();
     }
 
@@ -693,7 +685,7 @@ resetBtn.addEventListener('click', () => {
 
       // UI
       renderInventory();
-      equippedSlots();
+      renderEquippedSlots();
       requestSave();
     }
 
@@ -769,7 +761,7 @@ resetBtn.addEventListener('click', () => {
           btn.style.cssText =
             'width:100%; text-align:left; margin:4px 0; padding:6px; background:#4a4c4f; color:#ddd; border:1px solid #555; border-radius:4px; cursor:pointer;';
           btn.addEventListener('click', () => {
-            equippedSlots(slotKey, opt.name);
+            equipItem(slotKey, opt.name);
             closeGearModal();
             requestSave();
           });
@@ -795,15 +787,20 @@ resetBtn.addEventListener('click', () => {
 
     // --- smithing helpers ---
 function getLootQty(name) {
-  const n = Number(inventory.loot?.[name]);
-  return Number.isFinite(n) ? n : 0;
+  const v = inventory.loot?.[name];
+  return (v && typeof v === 'object') ? (v.qty || 0) : (v || 0);
 }
-function addLoot(name, delta) {
-  const cur = getLootQty(name);
-  const next = Math.max(0, cur + delta);
+
+function addLoot(name, delta, rarity = 'common') {
   if (!inventory.loot) inventory.loot = {};
-  inventory.loot[name] = next;
+  const v = inventory.loot[name];
+  if (v && typeof v === 'object') {
+    v.qty = Math.max(0, (v.qty || 0) + delta);
+  } else {
+    inventory.loot[name] = { qty: Math.max(0, (v || 0) + delta), rarity };
+  }
 }
+
 
 function canConsume(recipe) {
   // recipe = { Iron: 1, Coal: 1 }
@@ -828,18 +825,15 @@ function maxCraftable(recipe) {
 }
 
 function hasIngredients(recipe) {
-  return Object.entries(recipe.consumes).every(([name, qty]) =>
-    (inventory.loot[name] || 0) >= qty
-  );
+  return Object.entries(recipe.consumes).every(([name, need]) => getLootQty(name) >= need);
 }
 
+
 function consumeIngredients(recipe) {
-  Object.entries(recipe.consumes).forEach(([name, qty]) => {
-    inventory.loot[name] = (inventory.loot[name] || 0) - qty;
-    if (inventory.loot[name] <= 0) delete inventory.loot[name];
-  });
+  Object.entries(recipe.consumes).forEach(([name, need]) => addLoot(name, -need));
   renderInventory && renderInventory();
 }
+
 
 
     // Core task runner
@@ -921,14 +915,14 @@ let recipe = null;
             }
 
             // === Award / consume results ===
+// === Award / consume results ===
 if (skill === 'smithing') {
-  const recipe = smithingRecipes[type];
+  const recipe = SMITHING_RECIPES[type];
   if (!recipe) {
     console.warn('No recipe for', type);
   } else {
-    // Double-check you still have mats
+    // Make sure we still have mats
     if (!hasIngredients(recipe)) {
-      // Stop gracefully if mats ran out mid-queue
       running = false;
       runningSkill = runningType = null;
       progressOverlay.textContent = 'Not enough materials.';
@@ -939,14 +933,14 @@ if (skill === 'smithing') {
     // Consume inputs and add output
     consumeIngredients(recipe);
     addItem('loot', recipe.out.name, recipe.out.qty, recipe.out.rarity || 'common');
-    requestSave && requestSave(); // optional, if you wired it
+    requestSave && requestSave();
   }
 } else {
-  // Normal skilling drop
-  const drop = rollDrop(skill, type);   // uses your rarity tables
+  const drop = rollDrop(skill, type);
   if (drop) addItem('loot', drop.name, drop.qty, drop.rarity);
-  requestSave && requestSave(); // optional
+  requestSave && requestSave();
 }
+
 
 
 
@@ -1025,7 +1019,7 @@ if (skill === 'smithing') {
 
         // WICHTIG: Inventar neu rendern, sobald es angezeigt wird
         if (btn.dataset.tab === 'inventory') renderInventory();
-        if (btn.dataset.tab === 'equipment') equippedSlots();
+        if (btn.dataset.tab === 'equipment') renderEquippedSlots();
       });
     });
 
@@ -1052,7 +1046,7 @@ if (skill === 'smithing') {
     // Initial status update
     updateQueueStatus();// UI aktualisieren
     renderInventory();
-    equippedSlots();
+    renderEquippedSlots();
     // Slot Events
 
     // Modal schließen
@@ -1107,4 +1101,3 @@ if (skill === 'smithing') {
     }
     // Initialize to main menu
     showMainMenu();
-
