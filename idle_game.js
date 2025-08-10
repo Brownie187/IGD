@@ -41,7 +41,7 @@
     };
 
 // Per-type smithing recipes (single source of truth)
-const SMITHING_RECIPES = {
+const smithingRecipes = {
   'Iron Bar': {
     consumes: { Iron: 1, Coal: 1 },
     out: { name: 'Iron Bar', qty: 1, rarity: 'common' },
@@ -50,7 +50,8 @@ const SMITHING_RECIPES = {
   }
 };
 
-skills.smithing.types = Object.keys(SMITHING_RECIPES);
+skills.smithing.types = Object.keys(smithingRecipes);
+
 
 
     // ---- Config knobs (easy to tweak) ----
@@ -63,77 +64,6 @@ skills.smithing.types = Object.keys(SMITHING_RECIPES);
         epic: '#b36bff', legendary: '#f6b73f', unique: '#ff5e5e'
       }
     };
-
-    const SAVE_KEY = 'idleSave.v1';
-
-    function buildSave() {
-      return {
-        v: 1,
-        skills,
-        inventory,
-        equippedSlots,
-        taskQueue,
-        running: running ? {
-          skill: runningSkill,
-          type: runningType,
-          runs: window._runs ?? null
-        } : null,
-        ts: Date.now()
-      };
-    }
-
-    function applySave(data) {
-      // Minimal guard
-      if (!data || data.v !== 1) return;
-
-      // Shallow assign is fine for now
-      Object.assign(skills, data.skills || {});
-      inventory.loot = { ...(data.inventory?.loot || {}) };
-      inventory.equipment = { ...(data.inventory?.equipment || {}) };
-
-      if (data.equippedSlots) {
-        Object.assign(equippedSlots, data.equippedSlots);
-      }
-
-      taskQueue = Array.isArray(data.taskQueue) ? data.taskQueue : [];
-
-      renderInventory();
-      renderEquippedSlots();
-      updateSkillButtons();
-      refreshTypeTabs?.();
-      updateQueueStatus();
-    }
-
-    let saveDotTimer = null;
-    function showSavedDot() {
-      const dot = document.getElementById('saveDot');
-      if (!dot) return;
-      dot.style.color = '#3cba54'; // green
-      clearTimeout(saveDotTimer);
-      saveDotTimer = setTimeout(() => {
-        dot.style.color = '';
-      }, 600);
-    }
-
-    function requestSave() {
-      try {
-        localStorage.setItem(SAVE_KEY, JSON.stringify(buildSave()));
-        showSavedDot();
-      } catch (e) {
-        console.warn('Save failed:', e);
-      }
-    }
-
-    function tryLoad() {
-      try {
-        const raw = localStorage.getItem(SAVE_KEY);
-        if (!raw) return;
-        const data = JSON.parse(raw);
-        applySave(data);
-      } catch (e) {
-        console.warn('Load failed:', e);
-      }
-    }
 
     // --- Rarities & item meta ---
     const RARITIES = ["common", "uncommon", "rare", "epic", "legendary", "unique"];
@@ -319,7 +249,6 @@ skills.smithing.types = Object.keys(SMITHING_RECIPES);
     const gearList = document.getElementById('gearList');
 
     normalizeLootShape();
-    renderInventory();
 
     // --- Load save (if any) and render ---
     applyState(Persistence.load());
@@ -340,66 +269,72 @@ skills.smithing.types = Object.keys(SMITHING_RECIPES);
     const importFile = document.getElementById('importFile');
     const resetBtn = document.getElementById('resetBtn');
 
-    exportBtn?.addEventListener('click', () => {
-      requestSave(); // ensure latest state
-      const raw = localStorage.getItem(SAVE_KEY) || '{}';
-      const blob = new Blob([raw], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'idle_save.json';
-      a.click();
-      URL.revokeObjectURL(url);
-    });
+   exportBtn?.addEventListener('click', () => {
+  const payload = { version: Persistence.VERSION, state: collectState() };
+  const raw = JSON.stringify(payload, null, 2);
+  const blob = new Blob([raw], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'idle_save.json';
+  a.click();
+  URL.revokeObjectURL(url);
+});
 
-    importBtn?.addEventListener('click', () => importFile?.click());
-    importFile?.addEventListener('change', (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      const r = new FileReader();
-      r.onload = () => {
-        try {
-          const data = JSON.parse(r.result);
-          localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-          applySave(data);
-        } catch {
-          alert('Invalid save file.');
-        } finally {
-          importFile.value = '';
-        }
-      };
-      r.readAsText(file);
-    });
+   // Import a save file (supports both new and old shapes)
+importBtn?.addEventListener('click', () => importFile?.click());
+importFile?.addEventListener('change', (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const data = JSON.parse(r.result);
+      const state = data?.state || data?.state?.state || data; // be forgiving
+      if (!state) throw new Error('Invalid shape');
+      applyState(state);
+      requestSave();
+      renderInventory();
+      renderEquippedSlots();
+      updateSkillButtons();
+      refreshSkillUnlocks();
+      refreshTypeTabs();
+      updateQueueStatus();
+    } catch (err) {
+      alert('Invalid save file.');
+    } finally {
+      importFile.value = '';
+    }
+  };
+  r.readAsText(file);
+});
 
 
+// Reset button
 resetBtn.addEventListener('click', () => {
   if (!confirm('Reset all progress?')) return;
 
-  // stop any running task
   if (intervalId) clearInterval(intervalId);
   running = false;
   taskQueue = [];
   runningSkill = null;
   runningType  = null;
 
-  // reset skills
   Object.keys(skills).forEach(k => {
     skills[k].level     = 1;
     skills[k].xp        = 0;
     skills[k].xpToLevel = 100;
   });
 
-  // reset inventory (replace objects, don't null-out entries)
   inventory.loot = {};
   inventory.equipment = {};
 
-  // reset equipped slots
   Object.keys(equippedSlots).forEach(k => { equippedSlots[k] = null; });
 
-  // clear persisted save
-  try { localStorage.removeItem(SAVE_KEY); } catch {}
+  // clear persistence (both, just in case)
+  Persistence.reset?.();
+  try { localStorage.removeItem('idleSave.v1'); } catch {}
 
-  // reset UI
   progressBar.value = 0;
   progressOverlay.textContent = 'Aktuelle Task: - | Warteschlange: 0';
   typeTabs.innerHTML = '';
@@ -408,10 +343,10 @@ resetBtn.addEventListener('click', () => {
   renderInventory();
   renderEquippedSlots();
   updateSkillButtons();
+  refreshSkillUnlocks();
   refreshTypeTabs?.();
   updateQueueStatus();
 
-  // back to character selection
   showMainMenu();
 });
 
@@ -431,10 +366,6 @@ resetBtn.addEventListener('click', () => {
       updateQueueStatus();
       renderInventory();
     }
-
-    tryLoad();
-requestSave();
-
 
     // Return to character selection
     function showMainMenu() {
@@ -484,18 +415,17 @@ requestSave();
 
     // Update the bottom status bar
     function updateQueueStatus() {
-      // Berechne Restzeit der aktuellen Task
-      let timeLabel = '–';
-      if (runningSkill) {
-        const runs = window._runs;                // Wert aus runTask()
-        const dur = skills[runningSkill].duration; // Dauer pro Durchlauf in ms
-        timeLabel = runs === Infinity
-          ? '∞'
-          : ((runs * dur) / 1000).toFixed(1) + 's';
-      }
-      progressOverlay.textContent =
-        `Aktuelle Task: ${runningSkill || '-'} | Restzeit: ${timeLabel} | Warteschlange: ${taskQueue.length}`;
-      updateQueueButton();
+      let timeLabel = '-';
+if (runningSkill) {
+  const rec = (runningSkill === 'smithing') ? smithingRecipes[runningType] : null;
+  const dur = (rec?.time ?? skills[runningSkill].duration);
+  const runs = window._runs;
+  timeLabel = runs === Infinity ? '∞' : ((runs * dur) / 1000).toFixed(1) + 's';
+}
+progressOverlay.textContent =
+  `Aktuelle Task: ${runningSkill || '-'} | Restzeit: ${timeLabel} | Warteschlange: ${taskQueue.length}`;
+updateQueueButton();
+
     }
 
     // Refresh all skill button labels
@@ -577,15 +507,25 @@ requestSave();
 
       const d = skills[currentSkill];
       if (currentSkill === 'smithing') {
-  const rec = SMITHING_RECIPES[type];
-const dur = ((rec?.time ?? d.duration) / 1000).toFixed(1);
-const xp  = (rec?.xp ?? d.xpPer);
-const inputs = Object.entries(rec.consumes).map(([n, q]) => `${q}× ${n}`).join(', ');
-const out = rec.out;
-const outputs = `${out.qty}× ${out.name} (${out.rarity || 'common'})`;
+  const rec = smithingRecipes[type];                 // <-- correct object name
+  const dur = ((rec?.time ?? d.duration) / 1000).toFixed(1); // recipe uses `time`
+  const xp  = (rec?.xp ?? d.xpPer);
+  const inputs = Object.entries(rec.consumes).map(([n, q]) => `${q}× ${n}`).join(', ');
+  const out = rec.out;                               // <-- recipe uses `out`
+  const outputs = `${out.qty}× ${out.name} (${out.rarity || 'common'})`;
 
-info.innerHTML = `XP: ${xp}<br>Dauer: ${dur}s<br>Inputs: ${inputs}<br>Result: ${outputs}`;
-       } 
+  info.innerHTML =
+    `XP: ${xp}<br>` +
+    `Dauer: ${dur}s<br>` +
+    `Inputs: ${inputs}<br>` +
+    `Result: ${outputs}`;
+} else {
+  info.innerHTML =
+    `XP: ${d.xpPer}<br>` +
+    `Dauer: ${(d.duration / 1000).toFixed(1)}s<br>` +
+    `Drop: ${type}`;
+}
+
     }
 
 
@@ -704,13 +644,16 @@ info.innerHTML = `XP: ${xp}<br>Dauer: ${dur}s<br>Inputs: ${inputs}<br>Result: ${
     }
 
     function getCompatibleEquipmentFor(slotKey) {
-      const out = [];
-      const eq = inventory.equipment || {};
-      Object.entries(eq).forEach(([name, qty]) => {
-        if (qty > 0 && getItemSlotByName(name) === slotKey) out.push({ name, qty });
-      });
-      return out;
+  const out = [];
+  const eq = inventory.equipment || {};
+  Object.entries(eq).forEach(([name, qty]) => {
+    if (qty > 0 && getItemSlotByName(name) === slotKey) {
+      out.push({ name, qty });
     }
+  });
+  return out;
+}
+
 
     function closeGearModal() {
       gearModal.classList.add('hidden');
@@ -838,127 +781,103 @@ function consumeIngredients(recipe) {
 
     // Core task runner
     function runTask(skill, type, count) {
-      if (running && (skill !== runningSkill || type !== runningType)) {
-        clearInterval(intervalId);
-        running = false;
-        taskQueue = [];
-        updateQueueStatus();
-      }
+  if (running && (skill !== runningSkill || type !== runningType)) {
+    clearInterval(intervalId);
+    running = false;
+    taskQueue = [];
+    updateQueueStatus();
+  }
 
-      let runs = count;
-      window._runs = runs;
+  let runs = count;
+  window._runs = runs;
 
-      const d = skills[skill];
-      const step = d.duration / CFG.TICK_STEPS;
+  const d = skills[skill];
 
-      // If this task consumes inputs, cap runs by what's actually craftable
-let recipe = null;
+  // pick recipe and effective duration
+  const recipe = (skill === 'smithing') ? smithingRecipes[type] : null;
+  const effDuration = recipe?.time ?? d.duration;
+  const step = effDuration / CFG.TICK_STEPS;
 
-
-      running = true;
-      runningSkill = skill;
-      runningType = type;
-      updateQueueStatus();
-
-      (function iter() {
-        window._runs = runs;
-        let pct = 0;
-        progressBar.value = 0;
-
-        intervalId = setInterval(() => {
-          pct++;
-          progressBar.value = pct;
-          // ...
-
-          pct++;
-          progressBar.value = pct;
-
-          const remainingMs = runs === Infinity
-            ? Infinity
-            : (runs - 1) * d.duration + (100 - pct) * step;
-          const timeLabel = runs === Infinity ? '∞' : (remainingMs / 1000).toFixed(1) + 's';
-          progressOverlay.textContent = `Aktuelle Task: ${skill}→${type} | Restzeit: ${timeLabel} | Warteschlange: ${taskQueue.length}`;
-
-          if (pct >= 100) {
-            clearInterval(intervalId);
-            // consume inputs first (for smithing-type tasks)
-            if (recipe) {
-            if (!tryConsume(recipe)) {
-                // ran out of mats mid-run
-                running = false;
-                runningSkill = runningType = null;
-                progressOverlay.textContent = 'Not enough materials.';
-                processQueue();
-                updateQueueStatus();
-                return;
-            }
-            }
-
-            // now award the output
-            const drop = (typeof rollDrop === 'function')
-            ? rollDrop(skill, type)
-            : { name: type, qty: 1, rarity: 'common' };
-
-            if (drop) {
-            addItem('loot', drop.name, drop.qty, drop.rarity);
-            }
-
-            const s = skills[skill];
-            s.xp += s.xpPer;
-            while (s.xp >= s.xpToLevel) {
-              s.xp -= s.xpToLevel;
-              s.level++;
-              s.xpToLevel *= 1.5;
-              updateSkillButtons();
-              refreshSkillUnlocks();
-              refreshTypeTabs();
-            }
-
-            // === Award / consume results ===
-// === Award / consume results ===
-if (skill === 'smithing') {
-  const recipe = SMITHING_RECIPES[type];
-  if (!recipe) {
-    console.warn('No recipe for', type);
-  } else {
-    // Make sure we still have mats
-    if (!hasIngredients(recipe)) {
-      running = false;
-      runningSkill = runningType = null;
+  // if smithing, cap runs by available mats
+  if (recipe && Number.isFinite(runs)) {
+    const cap = maxCraftable(recipe.consumes);
+    runs = Math.min(runs, cap);
+    if (runs <= 0) {
       progressOverlay.textContent = 'Not enough materials.';
       updateQueueStatus();
-      processQueue();
       return;
     }
-    // Consume inputs and add output
-    consumeIngredients(recipe);
-    addItem('loot', recipe.out.name, recipe.out.qty, recipe.out.rarity || 'common');
-    requestSave && requestSave();
   }
-} else {
-  const drop = rollDrop(skill, type);
-  if (drop) addItem('loot', drop.name, drop.qty, drop.rarity);
-  requestSave && requestSave();
+
+  // mark as running
+  running = true;
+  runningSkill = skill;
+  runningType = type;
+  updateQueueStatus();
+
+  (function iter() {
+    window._runs = runs;
+    let pct = 0;
+    progressBar.value = 0;
+
+    intervalId = setInterval(() => {
+      pct++;
+      progressBar.value = pct;
+
+      const remainingMs = runs === Infinity
+        ? Infinity
+        : (runs - 1) * effDuration + (CFG.TICK_STEPS - pct) * step;
+      const timeLabel = runs === Infinity ? '∞' : (remainingMs / 1000).toFixed(1) + 's';
+      progressOverlay.textContent = `Aktuelle Task: ${skill}→${type} | Restzeit: ${timeLabel} | Warteschlange: ${taskQueue.length}`;
+
+      if (pct >= CFG.TICK_STEPS) {
+        clearInterval(intervalId);
+
+        // award / consume
+        if (skill === 'smithing') {
+          if (!tryConsume(recipe.consumes)) {
+            running = false;
+            runningSkill = runningType = null;
+            progressOverlay.textContent = 'Not enough materials.';
+            processQueue();
+            updateQueueStatus();
+            return;
+          }
+          addItem('loot', recipe.out.name, recipe.out.qty, recipe.out.rarity || 'common');
+        } else {
+          const drop = rollDrop(skill, type);
+          if (drop) addItem('loot', drop.name, drop.qty, drop.rarity);
+        }
+
+        // xp / level up
+        const s = skills[skill];
+        s.xp += (recipe?.xp ?? s.xpPer);
+        while (s.xp >= s.xpToLevel) {
+          s.xp -= s.xpToLevel;
+          s.level++;
+          s.xpToLevel *= CFG.LEVEL_GROWTH;
+          updateSkillButtons();
+          refreshSkillUnlocks();
+          refreshTypeTabs();
+        }
+
+        requestSave();
+
+        if (runs === Infinity || --runs > 0) {
+          iter();
+        } else {
+          running = false;
+          runningSkill = runningType = null;
+          progressOverlay.textContent = '';
+          processQueue();
+          updateQueueStatus();
+        }
+      }
+    }, step);
+  })();
 }
 
-
-
-
-            requestSave();
-
-            if (runs === Infinity || --runs > 0) {
-              iter();
-            } else {
-              running = false;
-              runningSkill = runningType = null;
-              progressOverlay.textContent = '';
-              processQueue();
-              updateQueueStatus();
-            }
-          }
-        }, step);
-      })();
-    }
+      
     // Process next queued task
     function processQueue() {
       if (running || !taskQueue.length) return;
@@ -1023,7 +942,7 @@ if (skill === 'smithing') {
       });
     });
 
-    const hasSave = !!localStorage.getItem(SAVE_KEY);
+    const hasSave = !!Persistence.load();
     const urlHasSeedFlag = window.location.search.includes('seed');
     const shouldSeed = !hasSave && urlHasSeedFlag;
 
