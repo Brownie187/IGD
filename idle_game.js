@@ -1,4 +1,4 @@
-// Skill definitions
+// Skill definition
     const skills = {
       fishing: {
         level: 1,
@@ -1107,3 +1107,4 @@ if (skill === 'smithing') {
     }
     // Initialize to main menu
     showMainMenu();
+
